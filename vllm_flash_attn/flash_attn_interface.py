@@ -1133,6 +1133,7 @@ def flash_attn_with_kvcache(
     rotary_interleaved=True,
     alibi_slopes=None,
     num_splits=0,
+    cached_seqlen_k=0,
     *,
     out=None,
 ):
@@ -1249,5 +1250,6 @@ def flash_attn_with_kvcache(
         window_size[1],
         rotary_interleaved,
         num_splits,
+        cached_seqlen_k,
     )
     return out

@@ -3,6 +3,7 @@
  ******************************************************************************/
 
 // Include these 2 headers instead of torch/extension.h since we don't need all of the torch headers.
+#include <cstdint>
 #include <torch/python.h>
 #include <torch/nn/functional.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -686,7 +687,8 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
                 int window_size_left,
                 int window_size_right,
                 bool is_rotary_interleaved,   // if true, rotary combines indices 0 & 1, else indices 0 & rotary_dim / 2
-                int num_splits
+                int num_splits,
+                const int cached_seqlen_k // if set, use this as the seqlen_k instead of kcache.size(1) (used for non-page cache and prealloc cachelen >> seq_len)
                 ) {
 
     auto dprops = at::cuda::getCurrentDeviceProperties();
@@ -735,7 +737,8 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
     const int num_blocks = !paged_KV ? 0 : kcache.size(0);
     const int page_block_size = !paged_KV ? 1 : kcache.size(1);
     TORCH_CHECK(!paged_KV || page_block_size % 16 == 0, "Paged KV cache block size must be divisible by 16");
-    const int seqlen_k = !paged_KV ? kcache.size(1) : max_num_blocks_per_seq * page_block_size;
+    // const int seqlen_k = !paged_KV ? kcache.size(1) : max_num_blocks_per_seq * page_block_size;
+    const int seqlen_k = !paged_KV ? (cached_seqlen_k > 0 ? cached_seqlen_k : kcache.size(1)) : max_num_blocks_per_seq * page_block_size;
     const int num_heads_k = kcache.size(2);
     const int batch_size_c = !paged_KV ? kcache.size(0) : batch_size;
     TORCH_CHECK(batch_size > 0, "batch size must be postive");
@@ -761,8 +764,9 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
 
     CHECK_SHAPE(q, batch_size, seqlen_q, num_heads, head_size_og);
     if (!paged_KV) {
-        CHECK_SHAPE(kcache, batch_size_c, seqlen_k, num_heads_k, head_size_og);
-        CHECK_SHAPE(vcache, batch_size_c, seqlen_k, num_heads_k, head_size_og);
+        const int cache_seqlen = kcache.size(1);
+        CHECK_SHAPE(kcache, batch_size_c, cache_seqlen, num_heads_k, head_size_og);
+        CHECK_SHAPE(vcache, batch_size_c, cache_seqlen, num_heads_k, head_size_og);
     } else {
         CHECK_SHAPE(kcache, num_blocks, page_block_size, num_heads_k, head_size_og);
         CHECK_SHAPE(vcache, num_blocks, page_block_size, num_heads_k, head_size_og);
